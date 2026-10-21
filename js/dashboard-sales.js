@@ -638,12 +638,28 @@ function renderSalesRankMonth(kind) {
   const rowFilter = row => orderChannel(row) === kind;
   const sourceRows = useErp ? erpMonth.filter(rowFilter) : monthEntries.filter(rowFilter);
   const rankMap = {};
+  const rankPeople = new Map();
   sourceRows.forEach(row => {
     const name = String(row.client || row.institution || '').trim();
     if (!name) return;
     const amount = useErp ? (parseFloat(row.supply) || 0) : (parseFloat(row.ourPurchase) || 0);
     rankMap[name] = (rankMap[name] || 0) + amount;
+    const person = String(row.person || '').trim();
+    // ERP의 유통사 분류명은 영업사원 이름으로 표시하지 않는다.
+    if (person && person !== '도도매/유통사') {
+      if (!rankPeople.has(name)) rankPeople.set(name, new Set());
+      rankPeople.get(name).add(person);
+    }
   });
+  const clientPeople = new Map((allClients || [])
+    .filter(client => !client._deleted)
+    .map(client => [String(client.name || '').trim(), String(client.assignedPerson || '').trim()
+      || (allUsers || []).find(user => user.id === client.assignedPersonId)?.name || '']));
+  const personByClient = Object.fromEntries(Object.keys(rankMap).map(name => {
+    const people = Array.from(rankPeople.get(name) || []).sort();
+    const assigned = clientPeople.get(name);
+    return [name, people.join(', ') || (assigned !== '도도매/유통사' ? assigned : '') || '담당자 미지정'];
+  }));
 
   const basisText = useErp ? `${basisMeta.label} 공급가 기준 (원)` : '당사 구매액 기준 (원)';
   const subEl = document.getElementById(`sh-rank-${kind}-sub`);
@@ -655,6 +671,7 @@ function renderSalesRankMonth(kind) {
     ym,
     periodEnd,
     basis: basisText,
+    personByClient,
     source: useErp ? `${basisMeta.label} ERP 공급가` : '당사 구매액',
   };
   window._shRankPages = window._shRankPages || {};
@@ -689,7 +706,7 @@ function shRenderRankPage(kind = 'office') {
           <div class="leader-name c360-link" style="font-size:12px" ${uiAction("click", function (event, uiValues) {
     event.stopPropagation();
     openClient360(String(uiValues[0]));
-  }, [name])} title="거래처 상세 보기">${escHtml(name)}</div>
+  }, [name])} title="거래처 상세 보기">${escHtml(name)}<div class="leader-meta">담당: ${escHtml(rankMeta.personByClient?.[name] || '담당자 미지정')}</div></div>
           <div class="leader-bar-wrap"><div class="leader-bar-fill" style="width:${amt / maxRank * 100}%;background:${color}"></div></div>
           <div class="leader-num sales-rank-num" style="color:${color}">
             <span class="sales-rank-amount">${Math.round(amt).toLocaleString()}</span>
@@ -763,6 +780,7 @@ function downloadShRankExcel(kind = 'office') {
     return {
       '순위': index + 1,
       [label]: name,
+      '담당 영업사원': meta.personByClient?.[name] || '담당자 미지정',
       '매출액(원)': sales,
       '비중(%)': total ? Number((sales / total * 100).toFixed(2)) : 0,
       '기준': meta.source || '',
@@ -774,6 +792,7 @@ function downloadShRankExcel(kind = 'office') {
   worksheet['!cols'] = [
     { wch: 8 },
     { wch: 34 },
+    { wch: 18 },
     { wch: 16 },
     { wch: 10 },
     { wch: 18 },
