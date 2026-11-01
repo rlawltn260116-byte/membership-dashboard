@@ -335,6 +335,49 @@ def _cost_month_range(year, month):
     return f"{year}{month:02d}01", f"{year}{month:02d}{last_day:02d}"
 
 
+def cost_months_to_collect(year, selection="", current=None):
+    current = current or now_kst()
+    if year < 2000 or year > current.year:
+        raise ValueError("Invalid cost collection year")
+    last_month = 12 if year < current.year else current.month
+    if not selection.strip():
+        return list(range(last_month, 0, -1))
+    months = []
+    for value in selection.split(","):
+        match = re.fullmatch(r"(\d{4})-(0[1-9]|1[0-2])", value.strip())
+        if not match or int(match[1]) != year or int(match[2]) > last_month:
+            raise ValueError("Cost months must be YYYY-MM in the selected year, without future months")
+        month = int(match[2])
+        if month not in months:
+            months.append(month)
+    return months
+
+
+def cost_response_rows(data):
+    # A failed or unfamiliar response must never replace stored figures with zero.
+    if isinstance(data, dict):
+        code = data.get("resultCode")
+        if code is not None and str(code).upper() not in ("0", "200", "SUCCESS", "OK"):
+            raise ValueError("ERP reported an unsuccessful cost response")
+    rows, rows_path = find_rows(data)
+    if rows is not None:
+        if not all(isinstance(row, dict) and "clsgAm" in row and
+                   ("benefitAm" in row or "costAm" in row) for row in rows):
+            raise ValueError("Unrecognized cost row schema")
+        return rows, rows_path
+    paths = [(), ("rows",), ("data",), ("data", "rows"), ("result", "rows"),
+             ("list",), ("resultData",), ("resultData", "rows"), ("resultData", "list"),
+             ("resultData", "dataList"), ("resultData", "data"), ("resultData", "records"),
+             ("resultData", "result"), ("resultData", "items")]
+    for path in paths:
+        node = data
+        for key in path:
+            node = node.get(key) if isinstance(node, dict) else None
+        if isinstance(node, list) and not node:
+            return [], ".".join(path) or "(root)"
+    raise ValueError("Missing cost rows in ERP response")
+
+
 def build_cost_analysis_payload(year, month, view=None):
     date_from, date_to = _cost_month_range(year, month)
     view = view or COST_ANALYSIS_VIEWS[6]
@@ -1189,19 +1232,24 @@ def run_job(page, job, replace_payload=True, override_payload=None):
     return captured["body"], captured
 
 
-def collect_cost_analysis(page, year):
+def collect_cost_analysis(page, year, months=None):
     print(f"\n{'='*60}")
     print(f"  {COST_ANALYSIS_JOB['menu_name']} 월별 수집")
     print(f"{'='*60}")
 
-    current = now_kst()
-    last_month = 12 if year < current.year else current.month
+    months = months if months is not None else cost_months_to_collect(year)
     uploaded = 0
     failed = []
+    completed = []
+    sync_path = f"erp/costAnalysis/{year}/sync"
 
     if not SKIP_FIREBASE_UPLOAD:
-        _firebase_write(f"erp/costAnalysis/{year}/schemaVersion", 1, method="PUT")
-        _firebase_write(
+        if not _firebase_write(sync_path, {"status": "running", "attemptStartedAt": now_kst_iso(),
+                              "requestedMonths": [f"{year}-{m:02d}" for m in months],
+                              "completedMonths": [], "error": ""}, method="PATCH"):
+            raise RuntimeError("Could not record cost sync start")
+        schema_ok = _firebase_write(f"erp/costAnalysis/{year}/schemaVersion", 1, method="PUT")
+        filters_ok = _firebase_write(
             f"erp/costAnalysis/{year}/filters",
             {
                 "basis": "마감기준",
@@ -1212,35 +1260,31 @@ def collect_cost_analysis(page, year):
             },
             method="PUT",
         )
+        if not schema_ok or not filters_ok:
+            _firebase_write(sync_path, {"status": "failed", "finishedAt": now_kst_iso(),
+                            "error": "metadata_upload_failed"}, method="PATCH")
+            raise RuntimeError("Could not upload cost metadata")
 
-    for month in range(1, last_month + 1):
+    for month in months:
         month_key = f"{year}-{month:02d}"
         views_payload = {}
         default_rows = []
         date_from, date_to = _cost_month_range(year, month)
-        synced_at = now_kst_iso()
         print(f"\n  [{month_key}] 조회")
         for view in COST_ANALYSIS_VIEWS:
             payload = build_cost_analysis_payload(year, month, view)
             print(f"    - {view['tab']} / {view['label']}")
-            body, info = run_job(
-                page,
-                COST_ANALYSIS_JOB,
-                replace_payload=True,
-                override_payload=payload,
-            )
-            if body is None:
-                failed.append({"month": month_key, "view": view["key"], "error": info.get("error") or info.get("status")})
-                print(f"      ✗ 실패: {failed[-1]['error']}")
-                continue
             try:
+                body, info = run_job(page, COST_ANALYSIS_JOB, replace_payload=True, override_payload=payload)
+                if body is None or not 200 <= (info.get("status") or 0) < 300:
+                    raise ValueError("Cost query did not return HTTP success")
                 data = json.loads(body.decode("utf-8"))
+                raw_rows, rows_path = cost_response_rows(data)
+                rows = normalize_cost_analysis_rows(raw_rows, view)
             except Exception as exc:
-                failed.append({"month": month_key, "view": view["key"], "error": f"json parse failed: {exc}"})
-                print(f"      ✗ JSON 파싱 실패: {exc}")
+                failed.append({"month": month_key, "view": view["key"], "error": type(exc).__name__})
+                print(f"      ✗ 조회/검증 실패: {type(exc).__name__}")
                 continue
-            raw_rows, rows_path = find_rows(data)
-            rows = normalize_cost_analysis_rows(raw_rows or [], view)
             totals = {
                 "sales": sum(row["sales"] for row in rows),
                 "cost": sum(row["cost"] for row in rows),
@@ -1258,9 +1302,12 @@ def collect_cost_analysis(page, year):
             if view["key"] == "mgmt-customer-class":
                 default_rows = rows
             print(f"      rows={rows_path or '-'} | {len(rows)}행 | 매출 {totals['sales']:,} | 매익 {totals['profit']:,}")
+        if len(views_payload) != len(COST_ANALYSIS_VIEWS):
+            print(f"  ✗ {month_key}: 일부 기준 조회 실패, 기존 월 데이터 유지")
+            continue
         rows = default_rows
         payload_remote = {
-            "syncedAt": synced_at,
+            "syncedAt": now_kst_iso(),
             "basis": "마감기준",
             "month": month_key,
             "dateFrom": date_from,
@@ -1279,9 +1326,6 @@ def collect_cost_analysis(page, year):
         }
         totals = payload_remote["totals"]
         totals["marginRate"] = round((totals["profit"] / totals["sales"]) * 100, 3) if totals["sales"] else 0
-        print(
-            f"  ✓ {len(views_payload)}/{len(COST_ANALYSIS_VIEWS)}개 기준 저장 | 기본 {len(rows)}행 | 매출 {totals['sales']:,} | 매익 {totals['profit']:,}"
-        )
         if not SKIP_FIREBASE_UPLOAD:
             ok = _firebase_write(
                 f"erp/costAnalysis/{year}/months/{month_key}",
@@ -1290,10 +1334,23 @@ def collect_cost_analysis(page, year):
             )
             if ok:
                 uploaded += 1
+                completed.append(month_key)
+                print(f"  ✓ {month_key}: {len(views_payload)}개 기준 업로드 완료")
+                _firebase_write(sync_path, {"completedMonths": completed}, method="PATCH")
+            else:
+                failed.append({"month": month_key, "error": "upload_failed"})
 
+    if not SKIP_FIREBASE_UPLOAD:
+        status = {"status": "failed" if failed else "success", "finishedAt": now_kst_iso(),
+                  "completedMonths": completed, "error": "partial_or_failed" if failed else ""}
+        if not failed:
+            status["lastSuccessAt"] = now_kst_iso()
+        if not _firebase_write(sync_path, status, method="PATCH"):
+            failed.append({"error": "status_upload_failed"})
+    print(f"  원가분석 업로드 완료: {uploaded}/{len(months)}개월")
     if failed:
-        print(f"  ⚠ 원가분석 실패 월: {failed}")
-    print(f"  원가분석 업로드 완료: {uploaded}/{last_month}개월")
+        print(f"  ⚠ 원가분석 실패: {failed}")
+        raise RuntimeError(f"Cost sync incomplete: {len(failed)} failures; existing failed months were preserved")
     return {"uploaded": uploaded, "failed": failed}
 
 
@@ -1399,6 +1456,7 @@ def process_job(page, job, days, save_xlsx=False):
 
 
 def run(playwright: Playwright, days=60, save_xlsx=False, cost_only=False, include_cost=False):
+    cost_months = cost_months_to_collect(TARGET_YEAR, os.environ.get("AMARANS_COST_MONTHS", "")) if cost_only or include_cost else None
     username = os.environ.get("AMARANS_USERNAME") or input("Amarans ID: ").strip()
     password = os.environ.get("AMARANS_PASSWORD") or getpass.getpass("Amarans password: ").strip()
     if not username or not password:
@@ -1441,9 +1499,11 @@ def run(playwright: Playwright, days=60, save_xlsx=False, cost_only=False, inclu
 
         if cost_only or include_cost:
             try:
-                results["cost-analysis"] = collect_cost_analysis(page, TARGET_YEAR)
+                results["cost-analysis"] = collect_cost_analysis(page, TARGET_YEAR, cost_months)
             except Exception as exc:
                 print(f"  ⚠ 원가분석 수집 실패: {exc}")
+                if cost_only:
+                    raise
         else:
             print("  원가분석 수집 생략: 기본 주문/출고 동기화 속도를 유지합니다.")
 

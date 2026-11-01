@@ -7,6 +7,7 @@
 .cost-controls { flex-wrap: wrap; gap: 8px; }
 .cost-controls button:disabled { opacity: .4; cursor: default; }
 .cost-sync { min-height: 20px; margin: 12px 0; }
+.cost-sync-stale { color: var(--red); font-weight: 600; }
 .cost-tabs, .cost-subtabs { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--border); overflow-x: auto; }
 .cost-tabs { margin: 8px 0 0; }
 .cost-subtabs { margin: 0 0 12px; border-bottom-color: #d9e5e1; }

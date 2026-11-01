@@ -8,7 +8,8 @@ const costAnalysis = (() => {
   const VIEW_MAP = new Map(VIEW_GROUPS.flatMap(group => group.views.map(([key, label]) => [key, { key, label, tab: group.tab }])));
   const DEFAULT_VIEW = 'mgmt-customer-class';
   const DEFAULT_FILTERS = { span: false, from: '', to: '', profit: 'all', rateMin: '', rateMax: '', minSales: '', limit: '' };
-  const state = { month: '', view: DEFAULT_VIEW, query: '', sort: { key: 'sales', dir: 'desc' }, years: new Map(), loading: false, error: '', request: 0, controller: null, chart: null, filters: { ...DEFAULT_FILTERS } };
+  const CACHE_MS = 5 * 60 * 1000;
+  const state = { month: '', view: DEFAULT_VIEW, query: '', sort: { key: 'sales', dir: 'desc' }, years: new Map(), loadedAt: new Map(), refreshTimer: null, loading: false, error: '', request: 0, controller: null, chart: null, filters: { ...DEFAULT_FILTERS } };
   const money = value => Math.round(value).toLocaleString('ko-KR');
   const rate = (profit, sales) => sales === 0 ? null : profit / sales * 100;
   const rateText = value => value === null ? '-' : `${value.toFixed(3)}%`;
@@ -158,14 +159,26 @@ const costAnalysis = (() => {
     return months;
   }
 
+  function syncSummary(list, now = Date.now()) {
+    const times = list.map(item => Date.parse(item.syncedAt)).filter(Number.isFinite);
+    if (!times.length) return { time: null, stale: false };
+    // A range is only as fresh as its oldest included month.
+    const time = Math.min(...times);
+    return { time, stale: now - time > 48 * 60 * 60 * 1000 };
+  }
+
   async function load(force = false) {
     if (!currentUser || !userCanOpenPage('cost')) return;
+    clearTimeout(state.refreshTimer);
+    state.refreshTimer = setTimeout(() => {
+      if (currentUser && document.getElementById('page-cost')?.classList.contains('active')) load(true);
+    }, CACHE_MS);
     if (!state.month) state.month = currentMonth();
     const years = yearsInRange();
     state.controller?.abort();
     const request = ++state.request;
     state.error = '';
-    const need = force ? years : years.filter(y => !state.years.has(y));
+    const need = force ? years : years.filter(y => !state.years.has(y) || Date.now() - (state.loadedAt.get(y) || 0) >= CACHE_MS);
     if (!need.length) { state.loading = false; draw(); return; }
     const userId = currentUser.id;
     const controller = new AbortController();
@@ -182,7 +195,7 @@ const costAnalysis = (() => {
         return [y, validate(await response.json(), y)];
       }));
       if (request !== state.request || currentUser?.id !== userId) return;
-      loaded.forEach(([y, data]) => state.years.set(y, data));
+      loaded.forEach(([y, data]) => { state.years.set(y, data); state.loadedAt.set(y, Date.now()); });
     } catch (error) {
       if (request !== state.request) return;
       state.error = error.name === 'AbortError' ? '조회 시간이 초과되었습니다. 다시 시도해 주세요.' : error.message;
@@ -197,6 +210,7 @@ const costAnalysis = (() => {
     if (!root || !currentUser) return;
     const months = state.years.get(state.month.slice(0, 4)) || {};
     const rangeInfo = rangeData();
+    const freshness = syncSummary(rangeInfo.list);
     const data = rangeInfo.list.length ? (monthData(state.month) || rangeInfo.list[0]) : null;
     const hasData = rangeInfo.list.length > 0;
     const meta = viewMeta();
@@ -230,9 +244,9 @@ const costAnalysis = (() => {
         </div>
         <input type="hidden" id="cost-date-from"><input type="hidden" id="cost-date-to">
       </div>
-      <div class="cost-sync" role="status">${state.loading ? '불러오는 중' : state.error ? escHtml(state.error) : hasData ? `데이터 업데이트 ${escHtml(new Date(rangeInfo.list[rangeInfo.list.length - 1].syncedAt).toLocaleString('ko-KR', {
+      <div class="cost-sync${freshness.stale ? ' cost-sync-stale' : ''}" role="status">${state.loading ? '불러오는 중' : state.error ? escHtml(state.error) : hasData ? `데이터 업데이트 ${escHtml(new Date(freshness.time).toLocaleString('ko-KR', {
   timeZone: 'Asia/Seoul'
-}))}${rangeInfo.missing.length ? ` · 미수집 ${escHtml(rangeInfo.missing.join(', '))}` : ''}` : '데이터 수집 대기'}</div>
+}))}${freshness.stale ? ' · 48시간 이상 갱신되지 않음' : ''}${rangeInfo.missing.length ? ` · 미수집 ${escHtml(rangeInfo.missing.join(', '))}` : ''}` : '데이터 수집 대기'}</div>
       <div class="cost-tabs" role="tablist" aria-label="원가분석 기준">
         ${VIEW_GROUPS.map(item => `<button type="button" role="tab" data-cost-tab="${escHtml(item.tab)}" class="${item.tab === group.tab ? 'active' : ''}">${escHtml(item.tab)}</button>`).join('')}
       </div>
@@ -469,6 +483,9 @@ const costAnalysis = (() => {
     state.chart?.destroy();
     state.chart = null;
     state.years.clear();
+    state.loadedAt.clear();
+    clearTimeout(state.refreshTimer);
+    state.refreshTimer = null;
     state.month = '';
     state.query = '';
     state.filters = { ...DEFAULT_FILTERS };
@@ -477,5 +494,5 @@ const costAnalysis = (() => {
     state.error = '';
     document.getElementById('cost-analysis-root')?.replaceChildren();
   }
-  return { render: load, clear, validate, total, rate };
+  return { render: load, clear, validate, total, rate, syncSummary };
 })();

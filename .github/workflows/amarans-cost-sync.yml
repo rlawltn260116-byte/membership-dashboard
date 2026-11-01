@@ -1,0 +1,53 @@
+name: 아마란스 원가분석 동기화
+
+on:
+  workflow_dispatch:
+    inputs:
+      months:
+        description: '수집 월 (예: 2026-08,2026-09). 비우면 올해 전체'
+        required: false
+        default: ''
+        type: string
+  schedule:
+    # Daily 03:20 KST; separate from the user-managed order/shipment schedule.
+    - cron: '20 18 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: amarans-cost-analysis-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: 마감기준 원가·매익 월별 수집
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: 수집 도구 설치
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: 수집 로직 회귀 검사
+        run: python -m unittest discover -s scripts -p test_cost_sync.py
+      - name: 원가분석 수집 및 업로드
+        run: python scripts/amarans_api_v10.py --auto --force --cost-only
+        env:
+          PYTHONUNBUFFERED: '1'
+          AMARANS_USERNAME: ${{ secrets.AMARANS_USERNAME }}
+          AMARANS_PASSWORD: ${{ secrets.AMARANS_PASSWORD }}
+          AMARANS_FIREBASE_DB_URL: ${{ secrets.AMARANS_FIREBASE_DB_URL }}
+          AMARANS_FIREBASE_AUTH_TOKEN: ${{ secrets.AMARANS_FIREBASE_AUTH_TOKEN }}
+          AMARANS_COST_MONTHS: ${{ inputs.months }}
+          AMARANS_BROWSER_CHANNEL: ''
+          AMARANS_DASHBOARD_DIR: ${{ github.workspace }}
+      - name: 실패 알림
+        if: failure()
+        run: echo '::error title=원가분석 갱신 실패::기존 월별 수치는 유지됩니다. 원가분석 수집 작업 로그를 확인하세요.'
