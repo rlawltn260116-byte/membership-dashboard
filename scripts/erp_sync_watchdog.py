@@ -214,6 +214,12 @@ def main():
         synced_at = parse_sync_time(synced_raw)
         result["syncedAt"] = synced_raw or ""
         result["syncedAtKst"] = iso_kst(synced_at) if synced_at else ""
+        packed_time = http_json(firebase_url(f"{REMOTE_ERP_PATH}/packed/syncedAt"), timeout=30)
+        packed_at = parse_sync_time(packed_time)
+        # 업로드 중의 짧은 시각 차이는 허용하되, 오래된 압축본을 정상으로 보지 않는다.
+        result["packedSyncedAt"] = packed_time or ""
+        data_mismatch = bool(synced_at and (not packed_at or (synced_at - packed_at).total_seconds() > 300))
+        result["dataMismatch"] = data_mismatch
         if synced_at:
             age_minutes = int((checked_at - synced_at).total_seconds() // 60)
             result["ageMinutes"] = age_minutes
@@ -223,6 +229,10 @@ def main():
             result["ageMinutes"] = None
             result["staleThresholdMinutes"] = expected_stale_minutes(checked_at)
             result["stale"] = result["activeWindow"]
+        if data_mismatch:
+            result["stale"] = result["activeWindow"]
+            result["status"] = "data-mismatch"
+            result["message"] = "주문/출고 원본과 압축 데이터의 갱신 시각이 다릅니다. 업로드 로그를 확인하세요."
     except Exception as exc:
         result["status"] = "firebase-read-failed"
         result["message"] = str(exc)

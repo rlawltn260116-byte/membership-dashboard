@@ -424,6 +424,7 @@ async function syncErpFromFirebase(base) {
         const parsedOrder = erpNormalizeApiRows(erpExtractApiRows(payload, 'order'), 'order');
         const parsedShip  = erpNormalizeApiRows(erpExtractApiRows(payload, 'ship'),  'ship');
         if (parsedOrder.length || parsedShip.length) {
+          erpValidateRemoteRows(payload, parsedOrder, parsedShip);
           setErpRuntimeData(parsedOrder, parsedShip, payload);
           _erpProgress('done', { cached: false, order: parsedOrder.length, ship: parsedShip.length });
           return true;

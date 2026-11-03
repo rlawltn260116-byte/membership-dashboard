@@ -784,17 +784,23 @@ def upload_dashboard_data_remote(ship_records, order_records, date_from=None, da
         "ship": pack_records(ship_records, "ship"),
     }
 
-    # Firebase REST는 단일 쓰기 16MB 제한 → 노드를 분리 업로드하고 메타는 PATCH.
-    ok_packed = _firebase_write(f"{REMOTE_ERP_PATH}/packed", packed, "PUT")
-    ok_order = _firebase_write(f"{REMOTE_ERP_PATH}/order", order_records, "PUT")
-    ok_ship  = _firebase_write(f"{REMOTE_ERP_PATH}/ship",  ship_records,  "PUT")
-    ok_meta  = _firebase_write(REMOTE_ERP_PATH, meta, "PATCH")
-    if ok_packed and ok_order and ok_ship and ok_meta:
-        print(f"✓ Firebase 업로드 완료: /{REMOTE_ERP_PATH} (주문 {len(order_records):,}, 출고 {len(ship_records):,})")
-        return True
-    print(f"⚠️ Firebase 업로드 일부 실패 (packed={ok_packed}, order={ok_order}, ship={ok_ship}, meta={ok_meta})")
-    print("   DB 규칙/URL/인증 토큰을 확인하세요. AMARANS_SKIP_FIREBASE_UPLOAD=1 로 끌 수 있습니다.")
-    return False
+    # 큰 배열의 전체 교체는 요청 본문이 작아도 Firebase 변경 크기 제한에 걸린다.
+    # 숫자 인덱스를 묶어 PATCH하고, 모든 데이터 저장 후에만 완료 시각을 공개한다.
+    for basis, records in (("order", order_records), ("ship", ship_records)):
+        if not _firebase_replace_rows(f"{REMOTE_ERP_PATH}/{basis}", records):
+            return False
+        part = packed[basis]
+        if not _firebase_write(f"{REMOTE_ERP_PATH}/packed/{basis}",
+                               {"basis": basis, "dict": part["dict"]}, "PATCH"):
+            return False
+        if not _firebase_replace_rows(f"{REMOTE_ERP_PATH}/packed/{basis}/rows", part["rows"]):
+            return False
+    if not _firebase_write(f"{REMOTE_ERP_PATH}/packed", {"v": 1, "syncedAt": now_iso}, "PATCH"):
+        return False
+    if not _firebase_write(REMOTE_ERP_PATH, meta, "PATCH"):
+        return False
+    print(f"✓ Firebase 업로드 완료: /{REMOTE_ERP_PATH} (주문 {len(order_records):,}, 출고 {len(ship_records):,})")
+    return True
 
 
 # 대시보드 전송용 압축 포맷.
@@ -831,6 +837,33 @@ def pack_records(rows, basis):
             put("region", r.get("region")),
         ])
     return {"basis": basis, "dict": dic, "rows": packed_rows}
+
+
+def _firebase_replace_rows(path, rows, batch_size=500):
+    """배열 형식을 유지하면서 기존 꼬리 행도 제거한다. 조회 실패 시 덮어쓰지 않는다."""
+    url = build_firebase_rest_url(path)
+    if not url:
+        return False
+    try:
+        req = urllib.request.Request(url + ("&" if "?" in url else "?") + "shallow=true")
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            existing = json.loads(resp.read().decode("utf-8"))
+        if existing is not None and not isinstance(existing, (dict, list)):
+            raise ValueError("Expected an indexed Firebase collection")
+        old_keys = set(existing) if isinstance(existing, dict) else set(map(str, range(len(existing or []))))
+    except Exception as exc:
+        print(f"  Firebase 배열 조회 실패: /{path}: {exc}")
+        return False
+
+    for start in range(0, len(rows), batch_size):
+        batch = {str(index): rows[index] for index in range(start, min(start + batch_size, len(rows)))}
+        if not _firebase_write(path, batch, "PATCH"):
+            return False
+    removed = sorted(old_keys - set(map(str, range(len(rows)))))
+    for start in range(0, len(removed), batch_size):
+        if not _firebase_write(path, dict.fromkeys(removed[start:start + batch_size]), "PATCH"):
+            return False
+    return True
 
 
 def _firebase_write(path, data, method="PUT"):
@@ -1507,8 +1540,11 @@ def run(playwright: Playwright, days=60, save_xlsx=False, cost_only=False, inclu
         else:
             print("  원가분석 수집 생략: 기본 주문/출고 동기화 속도를 유지합니다.")
 
+        if not cost_only and ("ship" not in results or "order" not in results):
+            raise RuntimeError("주문/출고 수집 일부 실패: 갱신 완료로 처리하지 않습니다.")
+
         # 대시보드 erp-data.js 생성
-        if "ship" in results or "order" in results:
+        if "ship" in results and "order" in results:
             print(f"\n{'='*60}")
             print(f"  대시보드 데이터 주입")
             print(f"{'='*60}")
@@ -1523,13 +1559,15 @@ def run(playwright: Playwright, days=60, save_xlsx=False, cost_only=False, inclu
                 order_records,
                 DASHBOARD_DIR,
             )
-            upload_dashboard_data_remote(
+            uploaded = upload_dashboard_data_remote(
                 remote_ship_records,
                 remote_order_records,
                 date_from=date_from,
                 date_to=date_to,
                 remote_payload=remote_payload,
             )
+            if not uploaded and not SKIP_FIREBASE_UPLOAD:
+                raise RuntimeError("ERP 업로드 실패: 매출 데이터와 갱신 시각이 모두 저장되지 않았습니다.")
 
         print("\n완료.")
         if not is_auto:

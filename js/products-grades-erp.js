@@ -1665,7 +1665,7 @@ function erpDescribeWatchdog(payload) {
   if (payload.status === 'stale-sync-already-running') {
     return { text: `지연 감지 · 실행 중${age ? ` (${age})` : ''}`, title: payload.message || baseTitle, warn: true, ok: false };
   }
-  if (payload.status === 'sync-failing' || payload.status === 'dispatch-failed' || payload.status === 'firebase-read-failed') {
+  if (payload.status === 'sync-failing' || payload.status === 'dispatch-failed' || payload.status === 'firebase-read-failed' || payload.status === 'data-mismatch') {
     return { text: `동기화 장애${age ? ` (${age})` : ''}`, title: payload.message || baseTitle, warn: true, ok: false };
   }
   if (payload.stale) {
@@ -1783,6 +1783,15 @@ function erpIsNewerRemoteSync(remoteSyncedAt, previousSyncedAt) {
   return Number.isFinite(remoteTime) && (!Number.isFinite(previousTime) || remoteTime > previousTime);
 }
 
+function erpValidateRemoteRows(payload, order, ship) {
+  for (const [basis, rows] of [['order', order], ['ship', ship]]) {
+    const expected = payload?.[`${basis}Count`];
+    if (!Array.isArray(rows) || !rows.length || (expected != null && Number(expected) !== rows.length)) {
+      throw new Error(`ERP 데이터 저장 불일치 (${basis}: ${rows?.length || 0}/${expected ?? '-'}건). 동기화 복구가 필요합니다.`);
+    }
+  }
+}
+
 async function erpRefreshFromRemote(options = {}) {
   const silent = options.silent === true;
   const url = erpGetRemoteDataUrl();
@@ -1823,14 +1832,13 @@ async function erpRefreshFromRemote(options = {}) {
       throw new Error(`Firebase 데이터에서 주문/출고를 모두 찾지 못했습니다. 주문 ${parsedOrder.length}건, 출고 ${parsedShip.length}건`);
     }
 
-    const meta = erpSaveRows(parsedOrder, parsedShip, payload.source || 'amarans-playwright');
-    if (payload.syncedAt) {
-      meta.syncedAt = payload.syncedAt;
-      meta.orderCount = payload.orderCount || parsedOrder.length;
-      meta.shipCount = payload.shipCount || parsedShip.length;
-      setPlainStorage('sj-erp-sync-meta', JSON.stringify(meta));
-      erpRefreshSyncStatus();
-    }
+    // 서버의 전체 기간 확정본으로 교체해야 취소·삭제된 날짜의 매출도 사라진다.
+    erpValidateRemoteRows(payload, parsedOrder, parsedShip);
+    setErpRuntimeData(parsedOrder, parsedShip, payload);
+    applyOrderBasis();
+    rerenderOrderBasisPages();
+    erpRefreshSyncStatus();
+    const meta = window.__erpRemoteData.meta;
     erpWriteAutoSyncMeta({ lastFullYmd: todayYmd });
     erpRenderSyncPreview(parsedOrder, parsedShip, 'Firebase 최신 ERP 데이터');
 
