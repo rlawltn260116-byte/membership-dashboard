@@ -134,7 +134,7 @@ def github_headers():
 
 
 def github_repo():
-    return os.environ.get("GITHUB_REPOSITORY", "kjs88/membership-dashboard")
+    return os.environ.get("GITHUB_REPOSITORY", "rlawltn260116-byte/membership-dashboard")
 
 
 def github_ref():

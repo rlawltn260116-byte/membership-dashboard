@@ -4,8 +4,8 @@
 
 ## Live
 
-- Production: https://kjs88.github.io/membership-dashboard/
-- Repository: `kjs88/membership-dashboard`
+- Production: https://rlawltn260116-byte.github.io/membership-dashboard/
+- Repository: `rlawltn260116-byte/membership-dashboard`
 - Deploy source: GitHub Pages, `main` branch root
 
 ## Security
@@ -25,7 +25,7 @@
 다른 PC에서 처음 세팅할 때는 PowerShell에서 아래 한 줄만 실행합니다.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Join-Path $env:TEMP 'membership-dashboard-setup.ps1'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/kjs88/membership-dashboard/main/scripts/setup-workspace.ps1' -OutFile $p; & $p"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Join-Path $env:TEMP 'membership-dashboard-setup.ps1'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/rlawltn260116-byte/membership-dashboard/main/scripts/setup-workspace.ps1' -OutFile $p; & $p"
 ```
 
 이 명령은 `C:\Users\사용자명\Downloads\dashboard_fixed_v9_app`에 저장소를 clone 또는 pull 하고, 로컬 확인용 서버를 연 뒤 브라우저를 띄웁니다.
@@ -70,7 +70,7 @@ git pull --rebase origin main
 git push origin main
 ```
 
-`main`에 push되면 GitHub Pages가 자동으로 재빌드합니다. 배포 후 https://kjs88.github.io/membership-dashboard/ 에서 확인합니다.
+`main`에 push되면 GitHub Pages가 자동으로 재빌드합니다. 배포 후 https://rlawltn260116-byte.github.io/membership-dashboard/ 에서 확인합니다.
 
 ## 아마란스 ERP 자동 수집
 

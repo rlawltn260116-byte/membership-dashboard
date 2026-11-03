@@ -2,7 +2,7 @@
 
 한국어로 대화한다. 도매(보조기기) 영업 대시보드 — GitHub Pages로 배포되는 정적 SPA.
 
-- **배포 URL**: https://kjs88.github.io/membership-dashboard/
+- **배포 URL**: https://rlawltn260116-byte.github.io/membership-dashboard/
 - **배포 방식**: GitHub Pages, `main` 브랜치 루트 기준. **push하면 자동 재배포** (1~2분).
 
 ## ⚠️ 작업 규칙 (필수)

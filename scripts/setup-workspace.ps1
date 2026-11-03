@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$repoUrl = "https://github.com/kjs88/membership-dashboard.git"
+$repoUrl = "https://github.com/rlawltn260116-byte/membership-dashboard.git"
 
 function Require-Command($Name, $InstallHint) {
   $cmd = Get-Command $Name -ErrorAction SilentlyContinue
