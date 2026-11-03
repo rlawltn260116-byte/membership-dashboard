@@ -103,6 +103,7 @@ jobs:
             fi
           } 2>&1 | tee sync.log
         env:
+          PYTHONUNBUFFERED: '1'
           AMARANS_USERNAME: ${{ secrets.AMARANS_USERNAME }}
           AMARANS_PASSWORD: ${{ secrets.AMARANS_PASSWORD }}
           AMARANS_FIREBASE_DB_URL: ${{ secrets.AMARANS_FIREBASE_DB_URL }}
