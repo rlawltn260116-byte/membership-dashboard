@@ -64,3 +64,7 @@ scripts/amarans_api_v10.py  # 아마란스 ERP 스크래퍼 (Playwright, GitHub 
 - 공휴일: `state.js`의 `krHolidayName()` — 대한민국 2025-26 공휴일(대체공휴일 포함). 공휴일/주말은 차트에서 빨간 글씨만 (🔴 이모지 금지).
 - 날짜 기준 '오늘'은 KST. 차트는 Chart.js 4.4.1 (`charts{}` 레지스트리, 재생성 전 destroy).
 - 커밋 메시지는 한국어로, 변경 요약 위주.
+
+<!-- ai-collab:start -->
+Follow @AGENTS.md (section "Automatic model routing") for ai-collab model routing.
+<!-- ai-collab:end -->

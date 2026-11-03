@@ -34,3 +34,6 @@ downloads/**/*.xls
 # Development dependencies and browser security test reports
 node_modules/
 security-test-results/
+
+# ai-collab local routing state
+.orca-routing/
