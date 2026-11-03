@@ -774,6 +774,7 @@ def upload_dashboard_data_remote(ship_records, order_records, date_from=None, da
         "baseSyncedAt": base_synced_at,
         "orderCount": len(order_records),
         "shipCount": len(ship_records),
+        "uploading": False,
     }
 
     # 대시보드는 압축본(packed)만 내려받는다. 원본 대비 약 1/7 크기.
@@ -786,6 +787,10 @@ def upload_dashboard_data_remote(ship_records, order_records, date_from=None, da
 
     # 큰 배열의 전체 교체는 요청 본문이 작아도 Firebase 변경 크기 제한에 걸린다.
     # 숫자 인덱스를 묶어 PATCH하고, 모든 데이터 저장 후에만 완료 시각을 공개한다.
+    if not _firebase_write(REMOTE_ERP_PATH, {"uploading": True}, "PATCH"):
+        return False
+    if not _firebase_write(f"{REMOTE_ERP_PATH}/packed", {"uploading": True}, "PATCH"):
+        return False
     for basis, records in (("order", order_records), ("ship", ship_records)):
         if not _firebase_replace_rows(f"{REMOTE_ERP_PATH}/{basis}", records):
             return False
@@ -795,7 +800,7 @@ def upload_dashboard_data_remote(ship_records, order_records, date_from=None, da
             return False
         if not _firebase_replace_rows(f"{REMOTE_ERP_PATH}/packed/{basis}/rows", part["rows"]):
             return False
-    if not _firebase_write(f"{REMOTE_ERP_PATH}/packed", {"v": 1, "syncedAt": now_iso}, "PATCH"):
+    if not _firebase_write(f"{REMOTE_ERP_PATH}/packed", {"v": 1, "syncedAt": now_iso, "uploading": False}, "PATCH"):
         return False
     if not _firebase_write(REMOTE_ERP_PATH, meta, "PATCH"):
         return False

@@ -395,7 +395,7 @@ async function syncErpFromFirebase(base) {
       // 압축본이 서버 최신 동기화보다 오래됐으면 신뢰하지 않고 원본으로 간다.
       const stale = syncedAt && packed && packed.syncedAt && packed.syncedAt !== syncedAt;
       if (stale) console.warn('[storage:erp] packed 오래됨 → 원본 사용', packed.syncedAt, '!=', syncedAt);
-      if (!stale && packed && (packed.order || packed.ship)) {
+      if (!stale && packed && !packed.uploading && (packed.order || packed.ship)) {
         _erpProgress('decode');
         const order = erpUnpack(packed.order);
         const ship = erpUnpack(packed.ship);

@@ -1784,6 +1784,7 @@ function erpIsNewerRemoteSync(remoteSyncedAt, previousSyncedAt) {
 }
 
 function erpValidateRemoteRows(payload, order, ship) {
+  if (payload?.uploading) throw new Error('ERP 데이터 업로드 중입니다. 완료 후 다시 불러옵니다.');
   for (const [basis, rows] of [['order', order], ['ship', ship]]) {
     const expected = payload?.[`${basis}Count`];
     if (!Array.isArray(rows) || !rows.length || (expected != null && Number(expected) !== rows.length)) {
