@@ -1,6 +1,12 @@
 ﻿name: 아마란스 ERP 동기화
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/amarans_api_v10.py'
+      - 'scripts/erp_sync_loop.py'
+      - '.github/workflows/amarans-sync.yml'
   workflow_dispatch:
     inputs:
       mode:
@@ -28,7 +34,7 @@ on:
 
 concurrency:
   group: amarans-erp-sync
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -83,7 +89,7 @@ jobs:
                   python scripts/erp_sync_loop.py --interval-minutes 5 --duration-minutes 230 --recent 60
                   ;;
               esac
-            elif [ "${{ inputs.mode }}" = "loop" ]; then
+            elif [ "${{ inputs.mode }}" = "loop" ] || [ "${{ github.event_name }}" = "push" ]; then
               kst_dow="$(TZ=Asia/Seoul date '+%u')"
               if [ "$kst_dow" -ge 6 ]; then
                 python scripts/erp_sync_loop.py --interval-minutes 120 --duration-minutes 250 --recent 60 --include-weekend
