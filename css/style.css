@@ -20,8 +20,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .login-card{background:#fff;border-radius:16px;padding:26px 24px 34px;width:420px;box-shadow:0 24px 64px rgba(0,95,75,.28);}
 .login-logo{text-align:left;margin-bottom:28px;}
 .login-logo-badge{display:inline-block;background:var(--green);color:#fff;font-size:11px;font-weight:700;padding:4px 10px;border-radius:5px;letter-spacing:.08em;margin-bottom:10px;}
-.login-logo-brand{display:block;line-height:0;margin-bottom:24px;}
-.login-logo-brand img{display:block;width:132px;height:auto;}
+.login-logo-brand{display:block;width:220px;max-width:100%;aspect-ratio:3.45;overflow:hidden;line-height:0;margin-bottom:24px;}
+.login-logo-brand img{display:block;width:100%;height:100%;object-fit:cover;transform:scale(1.25);}
 .login-logo-unit{display:grid;grid-template-columns:4px auto;align-items:start;column-gap:10px;row-gap:8px;margin-bottom:22px;color:#050505;font-size:16px;font-weight:800;line-height:1.22;font-family:var(--font);letter-spacing:0;}
 .login-logo-unit::before{content:"";grid-row:1 / span 2;width:4px;height:100%;border-radius:3px;background:var(--green);}
 .login-logo-unit span{display:flex;align-items:center;grid-column:2;}
