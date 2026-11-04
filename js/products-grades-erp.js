@@ -1804,7 +1804,7 @@ async function erpRefreshFromRemote(options = {}) {
 
   const todayYmd = erpGetKstParts().ymd;
   const needDailyFull = options.force === true || erpReadAutoSyncMeta()?.lastFullYmd !== todayYmd;
-  if (!needDailyFull) {
+  if (!needDailyFull && allOrderOrders.length && allShipOrders.length) {
     try {
       const tsRes = await fetch(`${url.replace(/\.json$/, '/syncedAt.json')}?_=${Date.now()}`, { method: 'GET', cache: 'no-store' });
       if (tsRes.ok) {
@@ -1819,23 +1819,12 @@ async function erpRefreshFromRemote(options = {}) {
 
   if (!silent) erpSetStatus('info', 'Firebase에서 최신 ERP 데이터를 불러오는 중입니다.');
   try {
-    const res = await fetch(`${url}${url.includes('?') ? '&' : '?'}_=${Date.now()}`, {
-      method: 'GET',
-      cache: 'no-store',
-    });
-    const payload = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(`Firebase ERP 데이터 조회 실패 (${res.status})`);
-    if (!payload) throw new Error('Firebase에 ERP 최신 데이터가 없습니다. Python 수집기를 먼저 실행하세요.');
-
-    const parsedOrder = erpNormalizeApiRows(erpExtractApiRows(payload, 'order'), 'order');
-    const parsedShip = erpNormalizeApiRows(erpExtractApiRows(payload, 'ship'), 'ship');
-    if (!parsedOrder.length || !parsedShip.length) {
-      throw new Error(`Firebase 데이터에서 주문/출고를 모두 찾지 못했습니다. 주문 ${parsedOrder.length}건, 출고 ${parsedShip.length}건`);
-    }
-
-    // 서버의 전체 기간 확정본으로 교체해야 취소·삭제된 날짜의 매출도 사라진다.
-    erpValidateRemoteRows(payload, parsedOrder, parsedShip);
-    setErpRuntimeData(parsedOrder, parsedShip, payload);
+    // 최초 로드와 같은 압축본/캐시 경로를 사용해야 일시 실패 뒤에도 복구된다.
+    // 전체 erp/latest에는 대용량 원본과 packed가 함께 있어 갱신마다 받지 않는다.
+    const loaded = await syncErpFromFirebase(DB_URL);
+    if (!loaded) throw new Error('ERP 데이터를 불러오지 못했습니다. 잠시 후 다시 시도하세요.');
+    const parsedOrder = allOrderOrders;
+    const parsedShip = allShipOrders;
     applyOrderBasis();
     rerenderOrderBasisPages();
     erpRefreshSyncStatus();
@@ -1847,7 +1836,7 @@ async function erpRefreshFromRemote(options = {}) {
       erpSetStatus('ok', `최신 ERP 데이터 반영 완료 · 주문 <strong>${parsedOrder.length.toLocaleString()}건</strong> / 출고 <strong>${parsedShip.length.toLocaleString()}건</strong>`);
       showToast('최신 ERP 데이터를 불러왔습니다.', 'success');
     }
-    return { ok: true, orderCount: parsedOrder.length, shipCount: parsedShip.length, syncedAt: payload.syncedAt || meta.syncedAt };
+    return { ok: true, orderCount: parsedOrder.length, shipCount: parsedShip.length, syncedAt: meta.syncedAt };
   } catch (err) {
     if (!silent) erpSetStatus('error', `ERP 데이터 새로고침 오류: ${err.message}`);
     return { ok: false, error: err.message };
