@@ -2,7 +2,7 @@
   "name": "membership-dashboard",
   "private": true,
   "scripts": {
-    "test": "node scripts/test-app-architecture.cjs && node scripts/test-app-data.cjs && node scripts/test-erp-refresh.cjs && node scripts/test-cost-analysis.cjs"
+    "test": "node scripts/test-app-architecture.cjs && node scripts/test-app-data.cjs && node scripts/test-erp-refresh.cjs && node scripts/test-erp-sync-request.cjs && node scripts/test-cost-analysis.cjs"
   },
   "devDependencies": {
     "@babel/generator": "8.0.6",

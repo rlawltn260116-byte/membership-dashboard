@@ -63,6 +63,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .user-name{font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .sidebar-sync-stamp{margin:-2px 14px 10px;padding:0 2px;color:#fff;font-size:11px;font-weight:700;line-height:1.35;text-align:center;white-space:normal;}
 .sidebar-sync-stamp.is-empty{color:rgba(255,255,255,.68);font-weight:600;}
+.sidebar-sync-label,.sidebar-sync-time{display:block;white-space:nowrap;word-break:keep-all;}
 .sidebar-sync-stamp.is-watchdog-warn{margin-left:12px;margin-right:12px;padding:6px 8px;border-radius:8px;background:rgba(239,68,68,.16);color:#fff;border:1px solid rgba(255,255,255,.22);box-shadow:inset 0 0 0 1px rgba(239,68,68,.16);}
 .nav{padding:8px 12px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;}
 .basis-toggle{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0 0 12px;padding:4px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);border-radius:8px;}
@@ -1091,4 +1092,4 @@ td.tm{color:var(--text);font-weight:500;}
   .su-drp .drp-cal+.drp-cal{border-left:none;padding-left:0;border-top:1px solid var(--border);padding-top:14px}
 }
 
-.sidebar-sync-row{display:flex;align-items:center;justify-content:center;gap:5px;margin:-2px 14px 10px}.sidebar-sync-row .sidebar-sync-stamp{margin:0;flex:1}.sidebar-refresh-btn{border:0;background:transparent;color:rgba(255,255,255,.78);font-size:15px;line-height:1;padding:2px 4px;cursor:pointer}.sidebar-refresh-btn:hover{color:#fff}.sidebar-refresh-btn:disabled{opacity:.45;cursor:wait}
+.sidebar-sync-row{display:flex;align-items:center;justify-content:center;gap:5px;margin:-2px 14px 10px}.sidebar-sync-row .sidebar-sync-stamp{margin:0;flex:1;min-width:0}.sidebar-refresh-btn{border:0;background:transparent;color:rgba(255,255,255,.78);font-size:15px;line-height:1;padding:2px 4px;cursor:pointer;flex-shrink:0}.sidebar-refresh-btn:hover{color:#fff}.sidebar-refresh-btn:disabled{opacity:.45;cursor:wait}.sidebar-refresh-btn.is-sync-pending{animation:sidebar-refresh-spin 1.2s linear infinite}@keyframes sidebar-refresh-spin{to{transform:rotate(360deg)}}

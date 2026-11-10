@@ -1635,8 +1635,13 @@ function erpUpdateSidebarSyncStamp(meta = erpReadSyncMeta()) {
   const syncedAt = meta?.syncedAt ? erpFormatSidebarUpdatedAt(meta.syncedAt) : '';
   const watchdog = erpLatestWatchdogState;
   const hasWarning = !!watchdog?.warn;
-  el.textContent = syncedAt ? `마지막 업데이트 ${syncedAt}` : '마지막 업데이트 -';
-  if (hasWarning) el.textContent = `! ${el.textContent}`;
+  const label = document.createElement('span');
+  label.className = 'sidebar-sync-label';
+  label.textContent = `${hasWarning ? '! ' : ''}마지막 업데이트`;
+  const time = document.createElement('span');
+  time.className = 'sidebar-sync-time';
+  time.textContent = syncedAt || '-';
+  el.replaceChildren(label, document.createTextNode(' '), time);
   el.title = syncedAt
     ? `Firebase ERP 기준: ${syncedAt} · ${meta?.syncMode || meta?.source || 'ERP'}`
     : '';
@@ -1857,6 +1862,94 @@ async function erpRunUnifiedRefresh() {
       btn.disabled = false;
       btn.textContent = originalText || '새로고침';
     }
+  }
+}
+
+let erpSidebarSyncRequestInFlight = false;
+
+async function erpSyncRequestFetch(url, options = {}, readJson = false) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(url, { ...options, cache: 'no-store', signal: controller.signal });
+    if (readJson) return { ok: response.ok, payload: response.ok ? await response.json() : null };
+    return response;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function erpRequestSyncFromSidebar() {
+  if (erpSidebarSyncRequestInFlight) return;
+  const button = document.getElementById('erp-sidebar-refresh-btn');
+  const base = (typeof DB_URL === 'string' ? DB_URL : '').replace(/\/+$/, '');
+  if (!base || typeof currentUser === 'undefined' || !currentUser) {
+    showToast('로그인과 Firebase 연결을 확인해 주세요.', 'error');
+    return;
+  }
+  const requestingUser = currentUser;
+  const setState = text => {
+    if (!button) return;
+    button.title = text;
+    button.setAttribute('aria-label', text);
+  };
+  erpSidebarSyncRequestInFlight = true;
+  if (button) {
+    button.disabled = true;
+    button.classList.add('is-sync-pending');
+    button.setAttribute('aria-busy', 'true');
+  }
+  let completed = false;
+  try {
+    setState('ERP 수집 요청 전송 중');
+    const requestedAt = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().replace('Z', '+09:00');
+    const response = await erpSyncRequestFetch(`${base}/erp/syncRequest.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestedAt, by: currentUser.name || currentUser.id || '사용자' }),
+    });
+    if (!response.ok) throw new Error(`요청 저장 실패 (${response.status})`);
+    if (currentUser !== requestingUser) { setState('ERP 수집 요청'); return; }
+    const waitingText = 'ERP 수집 대기 중 · 수집 세션이 없으면 다음 정기 수집 때 반영됩니다.';
+    setState(waitingText);
+    showToast(`수집을 요청했습니다. ${waitingText}`, 'info');
+    const deadline = Date.now() + 15 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, Math.min(15000, deadline - Date.now())));
+      if (currentUser !== requestingUser) { setState('ERP 수집 요청'); return; }
+      if (Date.now() >= deadline) break;
+      try {
+        const res = await erpSyncRequestFetch(`${base}/erp/latest/syncedAt.json?_=${Date.now()}`, {}, true);
+        if (currentUser !== requestingUser) { setState('ERP 수집 요청'); return; }
+        if (!res.ok) continue;
+        const syncedAt = res.payload;
+        if (!erpIsNewerRemoteSync(syncedAt, requestedAt)) continue;
+        setState('수집 완료 · 최신 ERP 데이터 반영 중');
+        const result = await erpRefreshFromRemote({ force: true });
+        if (!result.ok || !erpIsNewerRemoteSync(result.syncedAt, requestedAt)) continue;
+        erpUpdateSidebarSyncStamp();
+        setState('ERP 수집 완료 · 다시 수집 요청');
+        completed = true;
+        return result;
+      } catch (_) {
+        // 일시적인 조회/다운로드 오류는 다음 확인 주기에 다시 확인한다.
+        setState('ERP 수집 결과 확인 중 · 연결이 복구되면 다시 확인합니다.');
+      }
+    }
+    const message = '수집 세션이 실행 중이 아니면 다음 정기 수집 때 반영됩니다. 잠시 후 다시 확인해 주세요.';
+    setState(message);
+    showToast(message, 'info');
+  } catch (err) {
+    setState('ERP 수집 요청 실패 · 다시 시도');
+    showToast(`ERP 수집 요청을 보내지 못했습니다: ${err.message}`, 'error');
+  } finally {
+    erpSidebarSyncRequestInFlight = false;
+    if (button) {
+      button.disabled = false;
+      button.classList.remove('is-sync-pending');
+      button.removeAttribute('aria-busy');
+    }
+    if (!completed && currentUser === requestingUser) erpRefreshSyncStatus();
   }
 }
 
