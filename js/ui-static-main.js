@@ -685,3 +685,5 @@ uiBindStatic([
   downloadDailyEntriesExcel();
 }]
 ]);
+
+document.getElementById('erp-sidebar-refresh-btn')?.addEventListener('click', async (event) => { const button = event.currentTarget; button.disabled = true; try { await erpRunUnifiedRefresh(); } finally { button.disabled = false; } });

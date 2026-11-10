@@ -1090,3 +1090,5 @@ td.tm{color:var(--text);font-weight:500;}
   .su-drp .drp-calendars{flex-direction:column;gap:14px}
   .su-drp .drp-cal+.drp-cal{border-left:none;padding-left:0;border-top:1px solid var(--border);padding-top:14px}
 }
+
+.sidebar-sync-row{display:flex;align-items:center;justify-content:center;gap:5px;margin:-2px 14px 10px}.sidebar-sync-row .sidebar-sync-stamp{margin:0;flex:1}.sidebar-refresh-btn{border:0;background:transparent;color:rgba(255,255,255,.78);font-size:15px;line-height:1;padding:2px 4px;cursor:pointer}.sidebar-refresh-btn:hover{color:#fff}.sidebar-refresh-btn:disabled{opacity:.45;cursor:wait}
