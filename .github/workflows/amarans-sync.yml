@@ -1,4 +1,4 @@
-﻿name: 아마란스 ERP 동기화
+name: 아마란스 ERP 동기화
 
 on:
   push:
@@ -110,6 +110,15 @@ jobs:
           AMARANS_FIREBASE_AUTH_TOKEN: ${{ secrets.AMARANS_FIREBASE_AUTH_TOKEN }}
           AMARANS_BROWSER_CHANNEL: ''
           AMARANS_DASHBOARD_DIR: ${{ github.workspace }}
+
+      - name: 접속 회사 확인 실패 진단 보관
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: amarans-company-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: downloads/diagnostics/amarans-company-*.html
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: 실패 로그 요약
         if: failure()

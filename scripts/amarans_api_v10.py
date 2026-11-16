@@ -1,14 +1,14 @@
-﻿"""
+"""
 Amarans v3 (hybrid) - 출고/주문현황 다운로더
 
 전략:
-1. 로그인 + 회사전환 + 페이지 진입 → 페이지의 axios가 wehago-sign 만들 환경 준비
+1. 로그인 + 접속 회사 확인 + 페이지 진입 → 페이지의 axios가 wehago-sign 만들 환경 준비
 2. route 인터셉트 등록 (페이로드 교체용)
 3. 조회 버튼 클릭 → 페이지가 sign 포함한 요청 발송
 4. route handler가 페이로드만 우리 것으로 교체 (sign 헤더는 그대로 유지)
 5. 응답 받기 → JSON/xlsx 저장
 
-UI 동작: 로그인 + 회사전환 + 페이지 진입 + 조회 버튼 클릭만.
+UI 동작: 로그인 + 접속 회사 확인 + 페이지 진입 + 조회 버튼 클릭만.
 Tab 키 시뮬레이션, 팝업 클릭, 기간 달력 클릭, 그리드 우클릭 다 없음.
 """
 
@@ -19,6 +19,10 @@ import json
 import time
 import getpass
 import calendar
+import html
+import ssl
+import http.client
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -787,23 +791,40 @@ def upload_dashboard_data_remote(ship_records, order_records, date_from=None, da
 
     # 큰 배열의 전체 교체는 요청 본문이 작아도 Firebase 변경 크기 제한에 걸린다.
     # 숫자 인덱스를 묶어 PATCH하고, 모든 데이터 저장 후에만 완료 시각을 공개한다.
-    if not _firebase_write(REMOTE_ERP_PATH, {"uploading": True}, "PATCH"):
-        return False
-    if not _firebase_write(f"{REMOTE_ERP_PATH}/packed", {"uploading": True}, "PATCH"):
-        return False
-    for basis, records in (("order", order_records), ("ship", ship_records)):
-        if not _firebase_replace_rows(f"{REMOTE_ERP_PATH}/{basis}", records):
+    completed = False
+    try:
+        if not _firebase_write(REMOTE_ERP_PATH, {"uploading": True}, "PATCH"):
             return False
-        part = packed[basis]
-        if not _firebase_write(f"{REMOTE_ERP_PATH}/packed/{basis}",
-                               {"basis": basis, "dict": part["dict"]}, "PATCH"):
+        if not _firebase_write(f"{REMOTE_ERP_PATH}/packed", {"uploading": True}, "PATCH"):
             return False
-        if not _firebase_replace_rows(f"{REMOTE_ERP_PATH}/packed/{basis}/rows", part["rows"]):
+        for basis, records in (("order", order_records), ("ship", ship_records)):
+            if not _firebase_replace_rows(f"{REMOTE_ERP_PATH}/{basis}", records):
+                return False
+            part = packed[basis]
+            if not _firebase_write(f"{REMOTE_ERP_PATH}/packed/{basis}",
+                                   {"basis": basis, "dict": part["dict"]}, "PATCH"):
+                return False
+            if not _firebase_replace_rows(f"{REMOTE_ERP_PATH}/packed/{basis}/rows", part["rows"]):
+                return False
+        if not _firebase_write(f"{REMOTE_ERP_PATH}/packed", {"v": 1, "syncedAt": now_iso, "uploading": False}, "PATCH"):
             return False
-    if not _firebase_write(f"{REMOTE_ERP_PATH}/packed", {"v": 1, "syncedAt": now_iso, "uploading": False}, "PATCH"):
+        if not _firebase_write(REMOTE_ERP_PATH, meta, "PATCH"):
+            return False
+        completed = True
+    except Exception as exc:
+        # 예외 문자열에는 인증된 URL이 포함될 수 있으므로 유형만 남긴다.
+        print(f"  Firebase 업로드 중단: {type(exc).__name__}")
         return False
-    if not _firebase_write(REMOTE_ERP_PATH, meta, "PATCH"):
-        return False
+    finally:
+        if not completed:
+            # 서버가 쓰기를 수락한 뒤 연결이 끊어진 경우도 두 표시 모두 복구한다.
+            # 정리는 완료 시각을 공개하거나 원래 업로드 실패를 숨기지 않는다.
+            for path in (REMOTE_ERP_PATH, f"{REMOTE_ERP_PATH}/packed"):
+                try:
+                    if not _firebase_write(path, {"uploading": False}, "PATCH"):
+                        print(f"  ⚠️ uploading 표시 복구 실패: /{path}")
+                except Exception as exc:
+                    print(f"  ⚠️ uploading 표시 복구 실패: /{path} ({type(exc).__name__})")
     print(f"✓ Firebase 업로드 완료: /{REMOTE_ERP_PATH} (주문 {len(order_records):,}, 출고 {len(ship_records):,})")
     return True
 
@@ -884,22 +905,32 @@ def _firebase_write(path, data, method="PUT"):
         url, data=body, method=method,
         headers={"Content-Type": "application/json; charset=utf-8"},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            status = getattr(resp, "status", resp.getcode())
-            if 200 <= int(status) < 300:
-                print(f"  ✓ {method} /{path} ({size_mb:.1f}MB)")
-                return True
-            print(f"  ⚠️ {method} /{path} 응답 이상: HTTP {status}")
-    except urllib.error.HTTPError as exc:
-        detail = ""
+    attempts = 3
+    transient_statuses = (408, 429, 500, 502, 503, 504)
+    for attempt in range(1, attempts + 1):
+        retryable = False
         try:
-            detail = exc.read().decode("utf-8", "replace")[:300]
-        except Exception:
-            pass
-        print(f"  ⚠️ {method} /{path} 실패: {exc} | {detail}")
-    except Exception as exc:
-        print(f"  ⚠️ {method} /{path} 실패: {exc}")
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                status = int(resp.status)
+                if 200 <= status < 300:
+                    print(f"  ✓ {method} /{path} ({size_mb:.1f}MB)")
+                    return True
+                retryable = status in transient_statuses
+                reason = f"HTTP {status}"
+        except urllib.error.HTTPError as exc:
+            retryable = exc.code in transient_statuses
+            reason = f"HTTP {exc.code}"
+            exc.close()
+        except (urllib.error.URLError, ssl.SSLError, OSError, http.client.HTTPException) as exc:
+            retryable = True
+            reason = type(exc).__name__
+        except Exception as exc:
+            reason = type(exc).__name__
+        # URL/응답 본문에는 인증 정보가 있을 수 있으므로 출력하지 않는다.
+        print(f"  ⚠️ {method} /{path} 실패 ({attempt}/{attempts}): {reason}")
+        if not retryable or attempt == attempts:
+            break
+        time.sleep(attempt)
     return False
 
 
@@ -933,28 +964,67 @@ def login(page, username, password):
     page.wait_for_timeout(3000)
 
 
-def switch_company(page):
-    print("[2/5] 회사 전환 → 조아실버케어")
+def _redact_diagnostic_text(text):
+    """진단용 화면 텍스트에서 기존 인증 비밀값을 제거한다."""
+    secrets = [value for name, value in os.environ.items()
+               if (name.startswith("AMARANS_") and any(part in name for part in
+                   ("USERNAME", "PASSWORD", "TOKEN", "SECRET", "API_KEY", "DB_URL")))
+               or name in ("FIREBASE_AUTH_TOKEN", "FIREBASE_DB_URL")]
+    secrets.extend((FIREBASE_AUTH_TOKEN, FIREBASE_DB_URL))
+    for value in sorted(filter(None, secrets), key=len, reverse=True):
+        text = text.replace(value, "***")
+    return text
+
+
+def _save_company_diagnostic(body_text):
+    # 원본 DOM/스크린샷은 입력값·토큰을 노출할 수 있어 저장하지 않는다.
+    excerpt = _redact_diagnostic_text(body_text)[:4000]
+    print(f"  접속 화면 진단: {excerpt[:800] or '(화면 텍스트 없음)'}")
     try:
-        page.get_by_text("(주)헥톤프로젝트 멤버십사업팀").click(timeout=15000)
+        directory = Path("downloads") / "diagnostics"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"amarans-company-{now_kst().strftime('%Y%m%d_%H%M%S_%f')}.html"
+        path.write_text(
+            '<!doctype html><meta charset="utf-8"><title>접속 회사 확인 실패</title>'
+            f"<pre>{html.escape(excerpt)}</pre>", encoding="utf-8",
+        )
+        print(f"  진단 파일 저장: {path}")
     except Exception as exc:
-        body_text = ""
-        try:
-            body_text = page.locator("body").inner_text(timeout=5000)
-        except Exception:
-            pass
-        login_words = ("아이디", "비밀번호", "로그인", "일치하지", "인증")
-        if page.url.endswith("#/login") or any(word in body_text for word in login_words):
-            raise RuntimeError(
-                "Amarans login did not reach the company selector. "
-                "Check AMARANS_USERNAME/AMARANS_PASSWORD GitHub secrets."
-            ) from exc
-        print("  ⚠ 회사 전환 메뉴를 찾지 못했습니다. 현재 로그인된 회사 컨텍스트로 계속 진행합니다.")
-        return
-    page.locator("#userInfoPopupBtn").get_by_text("(주)헥톤프로젝트-(주)헥톤프로젝트-비전개발본부-멤버십사업팀").click()
-    page.get_by_text("(주)조아실버케어", exact=True).click()
-    page.get_by_role("button", name="확인").click()
-    page.wait_for_timeout(5000)
+        print(f"  진단 파일 저장 실패: {type(exc).__name__}")
+
+
+def verify_company(page):
+    """회사 선택을 바꾸지 않고, 로그인된 조아실버케어 화면만 허용한다."""
+    print("[2/5] 접속 회사 확인 → 조아실버케어")
+    body_text = ""
+    login_screen = False
+    try:
+        # 로그인 직후 비동기 화면 전환을 기다리되 숨겨진 회사 목록은 보지 않는다.
+        page.wait_for_function("""() => !location.hash.startsWith('#/login')
+            && document.body?.innerText.includes('조아실버케어')""", timeout=15000)
+    except Exception:
+        pass
+    try:
+        body_text = page.locator("body").inner_text(timeout=5000)
+        login_screen = ("#/login" in page.url or page.locator(
+            'input[type="password"]:visible, input[placeholder="아이디를 입력하세요"]:visible, '
+            'input[placeholder="비밀번호를 입력하세요"]:visible'
+        ).count() > 0)
+        if not login_screen and "조아실버케어" in body_text:
+            print("  조아실버케어 접속 확인 완료")
+            return
+    except Exception:
+        # 화면을 읽을 수 없는 경우도 업로드를 허용하지 않는다.
+        pass
+    _save_company_diagnostic(body_text)
+    if login_screen:
+        raise RuntimeError("아마란스 로그인 실패: 로그인 화면에 머물러 있습니다. 기존 로그인 정보를 확인하세요.")
+    raise RuntimeError("아마란스 회사 확인 실패: 조아실버케어 접속을 확인하지 못해 수집과 업로드를 중단합니다.")
+
+
+def switch_company(page):
+    """기존 진단 스크립트의 호환 진입점. 회사 전환 없이 확인만 한다."""
+    verify_company(page)
 
 
 # ============================================================
@@ -1527,7 +1597,7 @@ def run(playwright: Playwright, days=60, save_xlsx=False, cost_only=False, inclu
     results = {}
     try:
         login(page, username, password)
-        switch_company(page)
+        verify_company(page)
 
         if not cost_only:
             for job in JOBS:
